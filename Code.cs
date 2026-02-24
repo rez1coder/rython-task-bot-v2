@@ -12,7 +12,6 @@
 // - No Warranty: The software is provided "as-is," without warranty of any kind.
 // 
 // For more details, see https://www.gnu.org/licenses/gpl-3.0.en.html.
-
 using Streamer.bot.Plugin.Interface;
 using Streamer.bot.Plugin.Interface.Model;
 using Streamer.bot.Plugin.Interface.Enums;
@@ -29,7 +28,6 @@ using Newtonsoft.Json.Linq;
 /*
 Todo
 
-delete based on days
 
 {
 	platform-userId: {
@@ -84,10 +82,10 @@ public class Response
     public bool Success { get; set; }
     public string ErrorMsg { get; set; }
 
-    public Response(bool success, string errorMsg = null)
+    public Response(bool Success, string ErrorMsg = null)
     {
-        this.Success = success;
-        this.ErrorMsg = errorMsg;
+        this.Success = Success;
+        this.ErrorMsg = ErrorMsg;
     }
 }
 
@@ -483,9 +481,26 @@ public class CPHInline
         }
         else
         {
-            Respond($"Current focused task: {AddOrSelectResponse.Data.Item1}. {AddOrSelectResponse.Data.Item2}");
+            Respond($"Current focused task: {AddOrSelectResponse.Data.Item1 + 1}. {AddOrSelectResponse.Data.Item2}");
         }
 
+        return true;
+    }
+
+    // FOCUSED COMMAND
+    // Returns only the focused task
+    public bool FocusedCommand()
+    {
+        List<Task> userTasks = ListUserTasks();
+        int focusedTaskIndex = GetFocusedTask();
+        if (focusedTaskIndex == -1)
+        {
+            Respond("You do not have a focused task.");
+            return true;
+        }
+
+        var focusedTask = userTasks[focusedTaskIndex];
+        Respond($"Current focused task: {focusedTaskIndex + 1}. {focusedTask.Name}");
         return true;
     }
 
@@ -544,6 +559,7 @@ public class CPHInline
         if (!EditData.Success)
         {
             Respond(EditData.ErrorMsg);
+            return false;
         }
 
         int taskIndex = EditData.Data.Item1;
@@ -568,7 +584,6 @@ public class CPHInline
         // task data doesn't exist
         if (userTasks.Count == 0)
         {
-            // Respond("404 Tasks not found");
             return new(false, default, "Error 404: Tasks not found");
         }
 
@@ -643,8 +658,7 @@ public class CPHInline
 
         // user's data doesn't exist
         string key = userKey ?? GetKey();
-        var userData = this.taskData[key];
-        if (userData == null)
+        if (!this.taskData.TryGetValue(key, out var userData))
         {
             return emptyList;
         }
@@ -689,12 +703,64 @@ public class CPHInline
 
         // JOIN THE TASKS INTO ONE MESSAGE
         // edit however you like
-        string message = String.Join(" | ", userTasks.Select((t, index) => $"{index + 1}. {(t.Focused ? "(ongoing) " : "")}{t.Name}"));
+        var IncompleteTasks = userTasks.Select((t, index) => new { t, index }).Where(x => !x.t.Completed);
+        string message = String.Join(" | ", IncompleteTasks.Select(x => $"{x.index + 1}. {(x.t.Focused ? "(ongoing) " : "")}{x.t.Name}"));
         if (someoneElse)
         {
             string theirUser = GetUsername(key);
             message = $"{theirUser}'s tasks: {message}";
         }
+        else
+        {
+            message = $"{IncompleteTasks.Count()} tasks pending: {message}";
+        }
+
+        Respond(message);
+        return true;
+    }
+
+    public bool CompletedCommand()
+    {
+        CPH.TryGetArg("rawInput", out string rawInput);
+        rawInput = rawInput.Trim();
+        string? key = null;
+        bool someoneElse = false;
+        if (!String.IsNullOrWhiteSpace(rawInput))
+        {
+            key = GetKey(rawInput);
+            if (key == "")
+            {
+                Respond("User not found");
+                return false;
+            }
+            else
+            {
+                someoneElse = true;
+            }
+        }
+
+        List<Task> userTasks = ListUserTasks(key);
+        // task data doesn't exist
+        if (userTasks.Count == 0)
+        {
+            Respond("404 Tasks not found");
+            return false;
+        }
+
+        // JOIN THE TASKS INTO ONE MESSAGE
+        // edit however you like
+        var CompletedTasks = userTasks.Select((t, index) => new { t, index }).Where(x => x.t.Completed);
+        string message = String.Join(" | ", CompletedTasks.Select(x => $"{x.index + 1}. {x.t.Name}"));
+        if (someoneElse)
+        {
+            string theirUser = GetUsername(key);
+            message = $"{theirUser}'s tasks: {message}";
+        }
+        else
+        {
+            message = $"Completed {CompletedTasks.Count()} tasks: {message}";
+        }
+
         Respond(message);
         return true;
     }
