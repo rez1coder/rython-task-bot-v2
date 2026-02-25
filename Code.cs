@@ -95,6 +95,7 @@ public static class TaskHelpers
         return tasks.Split(Separators, StringSplitOptions.RemoveEmptyEntries).Select(t => t.Trim()).ToList();
     }
 
+    // return true index
     public static int GetTaskIndex(List<Task> tasks, string input)
     {
         if (int.TryParse(input, out int n))
@@ -109,6 +110,14 @@ public static class TaskHelpers
     public static List<string> ParseTasksInput(string input, Func<int> getFocusedTask)
     {
         input = input.Trim();
+        if (input == "all")
+        {
+            return new()
+            {
+                "all"
+            };
+        }
+
         bool IsSpaceSeparatedInts = Regex.IsMatch(input, @"^\d+(\s+\d+)*$");
         if (IsSpaceSeparatedInts)
         {
@@ -251,8 +260,13 @@ public static class MessageBuilder
         return "No tasks to log";
     }
 
-    public static string BuildRemoveMessage(List<string> tasksRemoved, List<string> tasksFailedToRemove)
+    public static string BuildRemoveMessage(List<string> tasksRemoved, List<string> tasksFailedToRemove, bool allTasks)
     {
+        if (allTasks)
+        {
+            return "All tasks are removed!";
+        }
+
         if (tasksFailedToRemove.Count == 0)
         {
             return "Removed task(s)!";
@@ -261,8 +275,12 @@ public static class MessageBuilder
         return $"Failed to remove: {String.Join(", ", tasksFailedToRemove)}";
     }
 
-    public static string BuildCompletedMessage(List<string> tasksCompleted, List<string> tasksFailedToComplete)
+    public static string BuildCompletedMessage(List<string> tasksCompleted, List<string> tasksFailedToComplete, bool allTasks)
     {
+        if (allTasks)
+        {
+            return "All tasks are completed!";
+        }
         if (tasksFailedToComplete.Count == 0 && tasksCompleted.Count == 1)
         {
             return "Task completed!";
@@ -270,7 +288,7 @@ public static class MessageBuilder
 
         if (tasksFailedToComplete.Count == 0)
         {
-            return "Completed all task(s) specified!";
+            return "Completed the task(s)!";
         }
 
         return $"Failed to complete: {String.Join(", ", tasksFailedToComplete)}";
@@ -342,6 +360,8 @@ public class TaskOperations
             return new Response<(int, string)>(false, default, "Task cannot be empty");
         if (int.TryParse(taskName, out _))
             return new Response<(int, string)>(false, default, $"'{taskName}' cannot be a number");
+        if (taskName.Equals("all", StringComparison.OrdinalIgnoreCase))
+            return new Response<(int, string)>(false, default, $"'all' is a reserved keyword");
         string key = getKey();
         if (!taskData.ContainsKey(key))
         {
@@ -810,27 +830,35 @@ public class CPHInline
             return false;
         }
 
+        bool allTasks = tasksToBeRemoved.Count == 1 && tasksToBeRemoved[0] == "all";
         var tasksRemoved = new List<string>();
         var tasksFailedToRemove = new List<string>();
         var taskIndices = new List<int>();
-        foreach (string task in tasksToBeRemoved)
+        if (!allTasks)
         {
-            int index = TaskHelpers.GetTaskIndex(userTasks, task);
-            if (index > -1 && !taskIndices.Contains(index))
+            foreach (string task in tasksToBeRemoved)
             {
-                taskIndices.Add(index);
-                tasksRemoved.Add(userTasks[index].Name);
+                int index = TaskHelpers.GetTaskIndex(userTasks, task);
+                if (index > -1 && !taskIndices.Contains(index))
+                {
+                    taskIndices.Add(index);
+                    tasksRemoved.Add(userTasks[index].Name);
+                }
+                else
+                {
+                    tasksFailedToRemove.Add(task);
+                }
             }
-            else
+
+            if (taskIndices.Count == 0)
             {
-                tasksFailedToRemove.Add(task);
+                Respond($"Failed to remove task(s): {String.Join(", ", tasksFailedToRemove)}");
+                return false;
             }
         }
-
-        if (taskIndices.Count == 0)
+        else
         {
-            Respond($"Failed to remove task(s): {String.Join(", ", tasksFailedToRemove)}");
-            return false;
+            taskIndices = Enumerable.Range(0, userTasks.Count).ToList();
         }
 
         foreach (int i in taskIndices.OrderByDescending(n => n))
@@ -842,7 +870,7 @@ public class CPHInline
         operations.SaveIntoTasks(userTasks);
         operations.Cleanup(true);
         SaveTasks();
-        Respond(MessageBuilder.BuildRemoveMessage(tasksRemoved, tasksFailedToRemove));
+        Respond(MessageBuilder.BuildRemoveMessage(tasksRemoved, tasksFailedToRemove, allTasks));
         return true;
     }
 
@@ -885,21 +913,29 @@ public class CPHInline
             return false;
         }
 
+        bool allTasks = tasksToBeCompleted.Count == 1 && tasksToBeCompleted[0] == "all";
         var tasksCompleted = new List<string>();
         var tasksFailedToComplete = new List<string>();
         var taskIndices = new List<int>();
-        foreach (string task in tasksToBeCompleted)
+        if (!allTasks)
         {
-            int index = TaskHelpers.GetTaskIndex(userTasks, task);
-            if (index > -1 && !taskIndices.Contains(index) && !userTasks[index].Completed)
+            foreach (string task in tasksToBeCompleted)
             {
-                taskIndices.Add(index);
-                tasksCompleted.Add(userTasks[index].Name);
+                int index = TaskHelpers.GetTaskIndex(userTasks, task);
+                if (index > -1 && !taskIndices.Contains(index) && !userTasks[index].Completed)
+                {
+                    taskIndices.Add(index);
+                    tasksCompleted.Add(userTasks[index].Name);
+                }
+                else
+                {
+                    tasksFailedToComplete.Add(task);
+                }
             }
-            else
-            {
-                tasksFailedToComplete.Add(task);
-            }
+        }
+        else
+        {
+            taskIndices = Enumerable.Range(0, userTasks.Count).ToList();
         }
 
         if (taskIndices.Count == 0)
@@ -912,15 +948,13 @@ public class CPHInline
         {
             userTasks[i].Completed = true;
             userTasks[i].Focused = false;
-
             Broadcast(new { mode = "done", index = i }, null);
         }
 
         IncrementDoneCount(taskIndices.Count);
-
         operations.SaveIntoTasks(userTasks);
         SaveTasks();
-        Respond(MessageBuilder.BuildCompletedMessage(tasksCompleted, tasksFailedToComplete));
+        Respond(MessageBuilder.BuildCompletedMessage(tasksCompleted, tasksFailedToComplete, allTasks));
         return true;
     }
 
